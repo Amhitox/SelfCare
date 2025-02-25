@@ -1,3 +1,1 @@
-# selfcare
-
-A new Flutter project.
+This is a combined version of both README files.
