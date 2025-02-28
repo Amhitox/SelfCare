@@ -32,7 +32,7 @@ class ThemeNotifier extends StateNotifier<ThemeMode> {
 final lightTheme = ThemeData(
   brightness: Brightness.light,
   primaryColor: AppColors.primary,
-  scaffoldBackgroundColor: Colors.grey[50],
+  scaffoldBackgroundColor: Color(0xFFFCFCFC),
   colorScheme: ColorScheme.light(
     primary: AppColors.primary,
     secondary: AppColors.primary.withOpacity(0.8),

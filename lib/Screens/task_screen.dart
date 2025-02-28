@@ -1,9 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:selfcare/Services/alarm_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../Models/task.dart';
+import 'add_task_screen.dart';
 
 class TasksScreen extends StatefulWidget {
-  const TasksScreen({Key? key}) : super(key: key);
+  const TasksScreen({super.key});
 
   @override
   _TasksScreenState createState() => _TasksScreenState();
@@ -17,55 +23,102 @@ class _TasksScreenState extends State<TasksScreen> {
       'name': 'Today',
       'icon': Icons.today,
       'color': Color(0xFF6C63FF),
-      'count': 5,
     },
     {
       'name': 'Self-Care',
       'icon': Icons.favorite,
       'color': Color(0xFFFF6B6B),
-      'count': 3,
     },
     {
       'name': 'Mindful',
       'icon': Icons.self_improvement,
       'color': Color(0xFF4ECDC4),
-      'count': 4,
     },
     {
       'name': 'Exercise',
       'icon': Icons.fitness_center,
       'color': Color(0xFFFFBE0B),
-      'count': 2,
     },
   ];
 
-  final tasks = [
-    {
-      'title': 'Morning Meditation',
-      'description': 'Start your day with mindfulness',
-      'time': '08:00 AM',
-      'duration': '15 min',
-      'category': 'Mindful',
-      'priority': 'High',
-      'isCompleted': false,
-      'color': Color(0xFF4ECDC4),
-    },
-    {
-      'title': 'Yoga Session',
-      'description': 'Gentle flow and stretching',
-      'time': '09:30 AM',
-      'duration': '30 min',
-      'category': 'Exercise',
-      'priority': 'Medium',
-      'isCompleted': false,
-      'color': Color(0xFFFFBE0B),
-    },
-  ];
+  Color getColorByTitle(String title) {
+    return categories.firstWhere(
+      (category) => category['name'] == title,
+      orElse: () => categories[0],
+    )['color'] as Color;
+  }
+
+  List<Task> tasks = [];
+  List<Task> filteredTasks = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTasks();
+  }
+
+  Future<void> _loadTasks() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String tasksJson = prefs.getString('tasks') ?? '[]';
+    final List<dynamic> tasksData = jsonDecode(tasksJson);
+    setState(() {
+      tasks = tasksData.map((json) => Task.fromMap(json)).toList();
+      filteredTasks = tasks.where((task) => !task.isCompleted).toList();
+    });
+  }
+
+  Future<void> _editTask(Task updatedTask) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final String tasksJson = prefs.getString('tasks') ?? '[]';
+    List<dynamic> tasksList = jsonDecode(tasksJson);
+    List<Task> currentTasks = tasksList.map((t) => Task.fromMap(t)).toList();
+
+    final existingIndex =
+        currentTasks.indexWhere((t) => t.id == updatedTask.id);
+    if (existingIndex != -1) {
+      currentTasks[existingIndex] = updatedTask;
+    }
+
+    final String updatedTasksJson =
+        jsonEncode(currentTasks.map((t) => t.toMap()).toList());
+    await prefs.setString('tasks', updatedTasksJson);
+
+    await AlarmService.cancelTaskAlarm(updatedTask);
+
+    setState(() {
+      tasks = currentTasks;
+      filteredTasks = tasks.where((task) => !task.isCompleted).toList();
+    });
+  }
+
+  Future<void> _deleteTask(String taskId) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final String tasksJson = prefs.getString('tasks') ?? '[]';
+    List<dynamic> tasksList = jsonDecode(tasksJson);
+    List<Task> currentTasks = tasksList.map((t) => Task.fromMap(t)).toList();
+
+    final taskToCancel = currentTasks.firstWhere((t) => t.id == taskId);
+
+    currentTasks.removeWhere((t) => t.id == taskId);
+
+    final String updatedTasksJson =
+        jsonEncode(currentTasks.map((t) => t.toMap()).toList());
+    await prefs.setString('tasks', updatedTasksJson);
+
+    await AlarmService.cancelTaskAlarm(taskToCancel);
+
+    setState(() {
+      tasks = currentTasks;
+      filteredTasks = tasks.where((task) => !task.isCompleted).toList();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xFFFAFAFC),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -76,14 +129,19 @@ class _TasksScreenState extends State<TasksScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {},
-        child: Icon(Icons.add),
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => AddTaskScreen()),
+          );
+        },
         backgroundColor: categories[selectedCategoryIndex]['color'] as Color,
         elevation: 4,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(15),
         ),
         tooltip: 'Add new task',
+        child: Icon(Icons.add),
       ),
     );
   }
@@ -152,7 +210,7 @@ class _TasksScreenState extends State<TasksScreen> {
   }
 
   Widget _buildCategories() {
-    return Container(
+    return SizedBox(
       height: 140,
       child: ListView.builder(
         padding: EdgeInsets.symmetric(horizontal: 20),
@@ -163,7 +221,18 @@ class _TasksScreenState extends State<TasksScreen> {
           final isSelected = selectedCategoryIndex == index;
 
           return GestureDetector(
-            onTap: () => setState(() => selectedCategoryIndex = index),
+            onTap: () => setState(() {
+              selectedCategoryIndex = index;
+              if (index != 0) {
+                filteredTasks = tasks
+                    .where((task) =>
+                        task.category == category['name'] && !task.isCompleted)
+                    .toList();
+              } else {
+                filteredTasks =
+                    tasks.where((task) => !task.isCompleted).toList();
+              }
+            }),
             child: AnimatedContainer(
               duration: Duration(milliseconds: 200),
               margin: EdgeInsets.only(right: 15, top: 10, bottom: 10),
@@ -210,7 +279,9 @@ class _TasksScreenState extends State<TasksScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    '${category['count']} tasks',
+                    category['name'] != 'Today'
+                        ? '${tasks.where((task) => task.category == category['name'] && !task.isCompleted).length} tasks'
+                        : '${tasks.where((task) => !task.isCompleted).length} tasks',
                     style: TextStyle(
                       fontSize: 13,
                       color: isSelected
@@ -231,16 +302,16 @@ class _TasksScreenState extends State<TasksScreen> {
     return Expanded(
       child: ListView.builder(
         padding: EdgeInsets.symmetric(horizontal: 20),
-        itemCount: tasks.length,
+        itemCount: filteredTasks.length,
         itemBuilder: (context, index) {
-          final task = tasks[index];
+          final task = filteredTasks[index];
           return _buildTaskCard(task);
         },
       ),
     );
   }
 
-  Widget _buildTaskCard(Map<String, dynamic> task) {
+  Widget _buildTaskCard(Task task) {
     return Container(
       margin: EdgeInsets.only(bottom: 15),
       decoration: BoxDecoration(
@@ -248,7 +319,7 @@ class _TasksScreenState extends State<TasksScreen> {
         borderRadius: BorderRadius.circular(25),
         boxShadow: [
           BoxShadow(
-            color: (task['color'] as Color).withOpacity(0.1),
+            color: getColorByTitle(task.category).withOpacity(0.1),
             blurRadius: 20,
             offset: Offset(0, 10),
           ),
@@ -257,9 +328,17 @@ class _TasksScreenState extends State<TasksScreen> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(25),
         child: Dismissible(
-          key: Key(task['title']),
+          key: Key(task.title),
           background: _buildDismissBackground(true),
           secondaryBackground: _buildDismissBackground(false),
+          onDismissed: (direction) {
+            if (direction == DismissDirection.startToEnd) {
+              task.isCompleted = true;
+              _editTask(task);
+            } else if (direction == DismissDirection.endToStart) {
+              _deleteTask(task.id);
+            }
+          },
           child: Material(
             color: Colors.white,
             child: InkWell(
@@ -276,7 +355,7 @@ class _TasksScreenState extends State<TasksScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                task['title'] as String? ?? 'Untitled Task',
+                                task.title,
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
@@ -285,7 +364,7 @@ class _TasksScreenState extends State<TasksScreen> {
                               ),
                               SizedBox(height: 6),
                               Text(
-                                task['description'] as String? ?? '',
+                                task.description ?? '',
                                 style: TextStyle(
                                   fontSize: 14,
                                   color: Colors.grey[600],
@@ -294,7 +373,7 @@ class _TasksScreenState extends State<TasksScreen> {
                             ],
                           ),
                         ),
-                        _buildPriorityBadge(task['priority'] as String),
+                        _buildPriorityBadge(task.priority),
                       ],
                     ),
                     SizedBox(height: 15),
@@ -303,11 +382,11 @@ class _TasksScreenState extends State<TasksScreen> {
                         Icon(
                           Icons.access_time,
                           size: 18,
-                          color: task['color'] as Color,
+                          color: getColorByTitle(task.category),
                         ),
                         SizedBox(width: 8),
                         Text(
-                          '${task['time']} • ${task['duration']}',
+                          task.formattedTime,
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[600],

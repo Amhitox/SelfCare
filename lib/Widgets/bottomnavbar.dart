@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:selfcare/Screens/home_screen.dart';
+import 'package:selfcare/Screens/study_screen.dart';
 
+import '../Screens/selfcare_screen.dart';
 import '../Screens/task_screen.dart';
 import '../utils/constants/colors.dart';
 
 class BottomNavScreen extends StatefulWidget {
   late int index;
-  BottomNavScreen({super.key, this.index = 0});
+  BottomNavScreen({super.key, this.index = -1});
 
   @override
   State<BottomNavScreen> createState() => _BottomNavScreenState();
@@ -17,11 +19,13 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
   final List<Widget> _pages = [
     HomeScreen(),
     TasksScreen(),
+    StudyScreen(),
+    SelfCareScreen(),
   ];
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.index;
+    _currentIndex = widget.index + 1;
   }
 
   void _onItemTapped(int index) {
@@ -43,12 +47,13 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
         unselectedItemColor: Colors.grey,
         selectedItemColor: AppColors.buttonColor,
         currentIndex: _currentIndex,
+        showUnselectedLabels: true,
         onTap: _onItemTapped,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(
               icon: Icon(Icons.task_outlined), label: 'Tasks'),
-          BottomNavigationBarItem(icon: Icon(Icons.mood), label: 'Mood'),
+          BottomNavigationBarItem(icon: Icon(Icons.book_sharp), label: 'Study'),
           BottomNavigationBarItem(
               icon: Icon(Icons.self_improvement_outlined), label: 'Selfcare'),
         ],
