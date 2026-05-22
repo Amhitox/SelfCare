@@ -1,0 +1,50 @@
+name: build apk
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: setup flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: flutter version
+        run: flutter --version
+
+      - name: get packages
+        run: flutter pub get
+
+      - name: analyze
+        run: flutter analyze
+        continue-on-error: true
+
+      - name: test
+        run: flutter test
+
+      - name: build debug apk
+        run: flutter build apk --debug
+
+      - name: upload apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfcare-debug-${{ github.ref_name }}
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 90
