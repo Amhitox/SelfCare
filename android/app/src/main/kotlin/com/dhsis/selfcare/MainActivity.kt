@@ -1,4 +1,4 @@
-package com.example.selfcare
+package com.dhsis.selfcare
 
 import io.flutter.embedding.android.FlutterActivity
 

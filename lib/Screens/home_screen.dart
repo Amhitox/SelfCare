@@ -1,440 +1,649 @@
-import 'dart:convert';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
-import 'package:selfcare/Services/alarm_service.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+
+import 'package:selfcare/Models/task.dart';
+import 'package:selfcare/Screens/add_task_screen.dart';
+import 'package:selfcare/Screens/journal_screen.dart';
+import 'package:selfcare/Screens/mood_screen.dart';
+import 'package:selfcare/Services/ads_service.dart';
+import 'package:selfcare/Widgets/ad_widgets.dart';
 import 'package:selfcare/Widgets/bottomnavbar.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:selfcare/Widgets/state_widgets.dart';
+import 'package:selfcare/providers/moods_provider.dart';
+import 'package:selfcare/providers/study_provider.dart';
+import 'package:selfcare/providers/tasks_provider.dart';
+import 'package:selfcare/utils/constants/colors.dart';
 
-import '../Models/task.dart';
-
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
+  String _greeting(DateTime now) {
+    final h = now.hour;
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    if (h < 21) return 'Good evening';
+    return 'Good night';
+  }
+
+  String _formatMinutes(int minutes) {
+    if (minutes <= 0) return '0m';
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    if (h <= 0) return '${m}m';
+    if (m == 0) return '${h}h';
+    return '${h}h ${m}m';
+  }
+
+  Future<void> _switchTab(BuildContext context, int index) async {
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => BottomNavScreen(index: index)),
+    );
+  }
+
+  Future<void> _refresh(WidgetRef ref) async {
+    ref.invalidate(tasksProvider);
+    ref.invalidate(moodsProvider);
+    ref.invalidate(studyProvider);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+  }
+
   @override
-  _HomeScreenState createState() => _HomeScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final now = DateTime.now();
+    final tasksNotifier = ref.read(tasksProvider.notifier);
+    ref.watch(tasksProvider);
+    final todayTasks = tasksNotifier.todayTasks()
+      ..sort((a, b) {
+        if (a.isCompleted != b.isCompleted) return a.isCompleted ? 1 : -1;
+        return a.dueDateTime.compareTo(b.dueDateTime);
+      });
+    final completed = tasksNotifier.completedToday();
+    final totalToday = todayTasks.length;
+
+    final moodsNotifier = ref.read(moodsProvider.notifier);
+    ref.watch(moodsProvider);
+    final todayMood = moodsNotifier.todayMood();
+
+    final studyNotifier = ref.read(studyProvider.notifier);
+    final studyState = ref.watch(studyProvider);
+    final minutesWeek = studyNotifier.minutesThisWeek();
+    final streak = studyState.achievement.streak;
+
+    final visibleTasks = todayTasks.take(5).toList();
+
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: Stack(
+          children: [
+            RefreshIndicator(
+              color: AppColors.primary,
+              onRefresh: () => _refresh(ref),
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 80),
+                children: [
+                  _Header(
+                    greeting: _greeting(now),
+                    dateLabel: DateFormat('EEEE, MMM d').format(now),
+                  ),
+                  const SizedBox(height: 20),
+                  _MoodCard(
+                    mood: todayMood?.emoji,
+                    label: todayMood?.label,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const MoodCheckInScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  _QuickStatsRow(
+                    tasksToday: '$completed / $totalToday',
+                    focusWeek: _formatMinutes(minutesWeek),
+                    streak: '$streak',
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "Today's Tasks",
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      TextButton(
+                        onPressed: () => _switchTab(context, 1),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 36),
+                        ),
+                        child: const Text('See all'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (visibleTasks.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: EmptyState(
+                        icon: Icons.checklist_rounded,
+                        title: 'Nothing planned',
+                        message:
+                            'Tap the button below to add your first task for today.',
+                        actionLabel: 'Add task',
+                        onAction: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const AddTaskScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                    )
+                  else
+                    ...visibleTasks.map(
+                      (t) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _HomeTaskTile(
+                          task: t,
+                          onToggle: () async {
+                            final updated =
+                                await tasksNotifier.toggleComplete(t);
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context)
+                              ..hideCurrentSnackBar()
+                              ..showSnackBar(
+                                SnackBar(
+                                  behavior: SnackBarBehavior.floating,
+                                  backgroundColor: updated.isCompleted
+                                      ? AppColors.success
+                                      : AppColors.textSecondary,
+                                  content: Text(
+                                    updated.isCompleted
+                                        ? 'Nice work! Task completed.'
+                                        : 'Task marked as active.',
+                                  ),
+                                ),
+                              );
+                            if (updated.isCompleted) {
+                              AdsService.instance.maybeShowInterstitial();
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 22),
+                  Text(
+                    'Quick actions',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _QuickActionTile(
+                          icon: Icons.add_task_rounded,
+                          label: 'Add task',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const AddTaskScreen(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _QuickActionTile(
+                          icon: Icons.book_outlined,
+                          label: 'Journal',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const JournalScreen(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _QuickActionTile(
+                          icon: Icons.menu_book_rounded,
+                          label: 'Study',
+                          onTap: () => _switchTab(context, 2),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Center(child: BannerAdWidget()),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  final List<Map<String, dynamic>> features = [
-    {
-      'title': 'Tasks Tracker',
-      'subtitle': 'What you planned to do today?',
-      'icon': '✨',
-      'color': Color(0xFF98BDFF),
-    },
-    {
-      'title': 'Study Timer',
-      'subtitle': 'Focus on your goals',
-      'icon': '📚',
-      'color': Color(0xFF4ECDC4),
-    },
-    {
-      'title': 'Self Care',
-      'subtitle': 'Take care of yourself',
-      'icon': '🌸',
-      'color': Color(0xFFFF9999),
-    },
-  ];
+class _Header extends StatelessWidget {
+  final String greeting;
+  final String dateLabel;
 
-  final categories = [
-    {
-      'name': 'Today',
-      'icon': Icons.today,
-      'color': Color(0xFF6C63FF),
-      'count': 5,
-    },
-    {
-      'name': 'Self-Care',
-      'icon': Icons.favorite,
-      'color': Color(0xFFFF6B6B),
-      'count': 3,
-    },
-    {
-      'name': 'Mindful',
-      'icon': Icons.self_improvement,
-      'color': Color(0xFF4ECDC4),
-      'count': 4,
-    },
-    {
-      'name': 'Exercise',
-      'icon': Icons.fitness_center,
-      'color': Color(0xFFFFBE0B),
-      'count': 2,
-    },
-  ];
-
-  final quotes = [
-    'The only way to do great work is to love what you do.',
-    'Believe you can and you\'re halfway there.',
-    'The future belongs to those who believe in the beauty of their dreams.',
-    'It’s not about ideas. It’s about making ideas happen.',
-    'Success is not the key to happiness. Happiness is the key to success.',
-    'Do what you can, with what you have, where you are.',
-    'Opportunities don’t happen, you create them.',
-    'Your time is limited, so don’t waste it living someone else’s life.',
-    'Why do programmers prefer dark mode? Because light attracts bugs!',
-    'There are 10 types of people in the world: those who understand binary and those who don’t.',
-    'Why did the programmer quit his job? Because he didn’t get arrays!',
-    'I told my computer I needed a break, and now it won’t stop sending me vacation ads.',
-    'Why do Java developers wear glasses? Because they don’t C#!',
-    'A SQL query walks into a bar, walks up to two tables, and asks: "Can I join you?"',
-    'Why was the function so calm? Because it had a lot of parameters under control.',
-    'Debugging is like being the detective in a crime movie where you are also the murderer.',
-  ];
-
-  Color getColorByTitle(String title) {
-    return categories.firstWhere(
-      (category) => category['name'] == title,
-      orElse: () => categories[0],
-    )['color'] as Color;
-  }
-
-  List<Task> tasks = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadTasks();
-    print(tasks);
-  }
-
-  Future<void> _loadTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String tasksJson = prefs.getString('tasks') ?? '[]';
-    final List<dynamic> tasksData = jsonDecode(tasksJson);
-
-    setState(() {
-      tasks = tasksData.map((json) => Task.fromMap(json)).toList();
-    });
-  }
-
-  Future<void> _editTask(Task updatedTask) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final String tasksJson = prefs.getString('tasks') ?? '[]';
-    List<dynamic> tasksList = jsonDecode(tasksJson);
-    List<Task> currentTasks = tasksList.map((t) => Task.fromMap(t)).toList();
-
-    final existingIndex =
-        currentTasks.indexWhere((t) => t.id == updatedTask.id);
-    if (existingIndex != -1) {
-      currentTasks[existingIndex] = updatedTask;
-    }
-
-    final String updatedTasksJson =
-        jsonEncode(currentTasks.map((t) => t.toMap()).toList());
-    await prefs.setString('tasks', updatedTasksJson);
-
-    await AlarmService.cancelTaskAlarm(updatedTask);
-    await AlarmService.scheduleTaskAlarm(updatedTask);
-
-    setState(() {
-      tasks = currentTasks;
-    });
-  }
-
-  final List<Map<String, dynamic>> insights = [
-    {
-      'title': 'Mood Streak',
-      'value': '7 days',
-      'icon': Icons.favorite,
-      'color': Color(0xFFFF9999),
-    },
-    {
-      'title': 'Study Time',
-      'value': '2.5 hrs',
-      'icon': Icons.timer,
-      'color': Color(0xFF4ECDC4),
-    },
-    {
-      'title': 'Tasks Done',
-      'value': '85%',
-      'icon': Icons.task_alt,
-      'color': Color(0xFF98BDFF),
-    },
-  ];
+  const _Header({required this.greeting, required this.dateLabel});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: SafeArea(
-        child: SingleChildScrollView(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildHeader(),
-              _buildQuoteCard(),
-              _buildFeatureGrid(),
-              if (tasks.isNotEmpty) _buildDailyTasks(),
+              Text(
+                greeting,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                dateLabel,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            gradient: AppColors.pinkGradient,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: const Icon(Icons.favorite, color: Colors.white, size: 22),
+        ),
+      ],
+    );
+  }
+}
+
+class _MoodCard extends StatelessWidget {
+  final String? mood;
+  final String? label;
+  final VoidCallback onTap;
+
+  const _MoodCard({
+    required this.mood,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasMood = mood != null && label != null;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: AppColors.pinkGradient,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withValues(alpha: 0.18),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  hasMood ? mood! : '🌸',
+                  style: const TextStyle(fontSize: 26),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hasMood ? "Today's mood" : 'How are you feeling?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasMood
+                          ? label!
+                          : 'Take a moment for a quick mood check-in.',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.white),
             ],
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildHeader() {
+class _QuickStatsRow extends StatelessWidget {
+  final String tasksToday;
+  final String focusWeek;
+  final String streak;
+
+  const _QuickStatsRow({
+    required this.tasksToday,
+    required this.focusWeek,
+    required this.streak,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _StatCard(
+            icon: Icons.check_circle_outline,
+            label: 'Tasks today',
+            value: tasksToday,
+            accent: AppColors.primary,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _StatCard(
+            icon: Icons.timer_outlined,
+            label: 'Focus / week',
+            value: focusWeek,
+            accent: AppColors.info,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _StatCard(
+            icon: Icons.local_fire_department_rounded,
+            label: 'Streak',
+            value: '🔥 $streak',
+            accent: AppColors.accent,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color accent;
+
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Good ${_getGreeting()}! ✨',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Dhsiis',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: Colors.grey[200],
-                child: Icon(
-                  Icons.person,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFeatureGrid() {
-    return GridView.builder(
-      padding: EdgeInsets.symmetric(horizontal: 20),
-      shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 15,
-        mainAxisSpacing: 15,
-        childAspectRatio: 1.1,
-      ),
-      itemCount: features.length,
-      itemBuilder: (context, index) {
-        final feature = features[index];
-        return GestureDetector(
-          onTap: () => Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                  builder: (context) => BottomNavScreen(
-                        index: index,
-                      ))),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(25),
-              boxShadow: [
-                BoxShadow(
-                  color: feature['color'].withOpacity(0.2),
-                  blurRadius: 15,
-                  offset: Offset(0, 5),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  feature['icon'],
-                  style: TextStyle(fontSize: 40),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  feature['title'],
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  feature['subtitle'],
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildDailyTasks() {
-    return Padding(
-      padding: EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Today\'s Tasks',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-          SizedBox(height: 15),
-          ...tasks.map((task) => _buildTaskItem(task)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTaskItem(Task task) {
-    return Container(
-      margin: EdgeInsets.only(bottom: 15),
-      padding: EdgeInsets.all(15),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: Offset(0, 5),
-          ),
-        ],
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: EdgeInsets.all(8),
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
-              color: getColorByTitle(task.category).withOpacity(0.1),
-              shape: BoxShape.circle,
+              color: accent.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: InkWell(
-              onTap: () {
-                setState(() {
-                  if (task.isCompleted) {
-                    task.isCompleted = task.isCompleted;
-                  } else {
-                    task.isCompleted = !task.isCompleted;
-                  }
-                  _editTask(task);
-                });
-              },
-              child: Icon(
-                task.isCompleted ? Icons.check_circle : Icons.circle_outlined,
-                color: getColorByTitle(task.category),
+            child: Icon(icon, size: 18, color: accent),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeTaskTile extends StatelessWidget {
+  final Task task;
+  final VoidCallback onToggle;
+
+  const _HomeTaskTile({required this.task, required this.onToggle});
+
+  Color _priorityColor() {
+    switch (task.priority) {
+      case 'High':
+        return AppColors.accent;
+      case 'Medium':
+        return AppColors.warning;
+      case 'Low':
+      default:
+        return AppColors.info;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final priorityColor = _priorityColor();
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: onToggle,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: task.isCompleted
+                    ? AppColors.primary
+                    : Colors.transparent,
+                border: Border.all(
+                  color: task.isCompleted
+                      ? AppColors.primary
+                      : Theme.of(context).dividerColor,
+                  width: 2,
+                ),
               ),
+              child: task.isCompleted
+                  ? const Icon(Icons.check, color: Colors.white, size: 18)
+                  : null,
             ),
           ),
-          SizedBox(width: 15),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   task.title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                    decoration: task.isCompleted
-                        ? TextDecoration.lineThrough
-                        : TextDecoration.none,
-                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        decoration: task.isCompleted
+                            ? TextDecoration.lineThrough
+                            : null,
+                        decorationColor: AppColors.textMuted,
+                      ),
                 ),
-                Text(
-                  task.formattedTime,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.schedule,
+                      size: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      task.formattedTime,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: priorityColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      task.category,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: AppColors.textMuted),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: getColorByTitle(task.category).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              task.category,
-              style: TextStyle(
-                fontSize: 12,
-                color: getColorByTitle(task.category),
-                fontWeight: FontWeight.w500,
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickActionTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _QuickActionTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: AppColors.primary),
               ),
-            ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuoteCard() {
-    return Container(
-      margin: EdgeInsets.all(20),
-      width: double.infinity,
-      padding: EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF98BDFF), Color(0xFF4ECDC4)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(25),
-      ),
-      child: Column(
-        children: [
-          Text(
-            '"${quotes[Random().nextInt(quotes.length)]}"',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          SizedBox(height: 10),
-          Text(
-            '- Dhsis Quote',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withOpacity(0.8),
-            ),
-          ),
-        ],
       ),
     );
-  }
-
-  String _getGreeting() {
-    var hour = DateTime.now().hour;
-    if (hour < 12) return 'Morning';
-    if (hour < 17) return 'Afternoon';
-    return 'Evening';
   }
 }

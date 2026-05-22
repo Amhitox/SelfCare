@@ -1,85 +1,63 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:selfcare/Services/alarm_service.dart';
-import 'package:selfcare/Widgets/bottomnavbar.dart';
-import 'package:selfcare/providers/theme_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
-import '../Models/task.dart';
+import 'package:selfcare/Models/task.dart';
+import 'package:selfcare/providers/tasks_provider.dart';
+import 'package:selfcare/utils/constants/colors.dart';
+import 'package:selfcare/utils/constants/strings.dart';
 
-class AddTaskScreen extends StatefulWidget {
-  const AddTaskScreen({super.key});
+class AddTaskScreen extends ConsumerStatefulWidget {
+  final Task? existing;
+  const AddTaskScreen({super.key, this.existing});
 
   @override
-  _AddTaskScreenState createState() => _AddTaskScreenState();
+  ConsumerState<AddTaskScreen> createState() => _AddTaskScreenState();
 }
 
-class _AddTaskScreenState extends State<AddTaskScreen> {
+class _AddTaskScreenState extends ConsumerState<AddTaskScreen> {
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController _titleController;
-  late TextEditingController _descriptionController;
-  TimeOfDay _selectedTime = TimeOfDay.now();
-  String _selectedCategory = 'today';
-  String _selectedPriority = 'Medium';
+  late final TextEditingController _titleController;
+  late final TextEditingController _descriptionController;
 
-  final List<Map<String, dynamic>> categories = [
-    {
-      'name': 'Self-Care',
-      'icon': Icons.favorite,
-      'color': Color(0xFFFF6B6B),
-      'count': 3,
-    },
-    {
-      'name': 'Mindful',
-      'icon': Icons.self_improvement,
-      'color': Color(0xFF4ECDC4),
-      'count': 4,
-    },
-    {
-      'name': 'Exercise',
-      'icon': Icons.fitness_center,
-      'color': Color(0xFFFFBE0B),
-      'count': 2,
-    },
-  ];
+  late String _category;
+  late String _priority;
+  late DateTime _dueDate;
+  late TimeOfDay _dueTime;
+  bool _saving = false;
 
-  final List<String> priorities = ['Low', 'Medium', 'High'];
+  bool get _isEditing => widget.existing != null;
 
   @override
   void initState() {
     super.initState();
-    _titleController = TextEditingController();
-    _descriptionController = TextEditingController();
-  }
+    final existing = widget.existing;
+    _titleController =
+        TextEditingController(text: existing?.title ?? '');
+    _descriptionController =
+        TextEditingController(text: existing?.description ?? '');
 
-  Future<void> _saveTasks(Task task) async {
-    final prefs = await SharedPreferences.getInstance();
-    final newTask = Task(
-      id: task.id,
-      title: task.title,
-      description: task.description,
-      createdAt: task.createdAt,
-      dueTime: _selectedTime,
-      priority: _selectedPriority,
-      category: task.category,
-    );
-
-    final String tasksJson = prefs.getString('tasks') ?? '[]';
-    List<dynamic> tasksList = jsonDecode(tasksJson);
-    List<Task> currentTasks = tasksList.map((t) => Task.fromMap(t)).toList();
-
-    final existingIndex = currentTasks.indexWhere((t) => t.id == newTask.id);
-    if (existingIndex != -1) {
-      currentTasks[existingIndex] = newTask;
+    if (existing != null) {
+      _category = AppConsts.taskCategories.contains(existing.category)
+          ? existing.category
+          : AppConsts.taskCategories.first;
+      _priority = AppConsts.taskPriorities.contains(existing.priority)
+          ? existing.priority
+          : 'Medium';
+      _dueDate = existing.dueDate;
+      _dueTime = existing.dueTime;
     } else {
-      currentTasks.add(newTask);
+      final now = DateTime.now();
+      final defaultDt = now.add(const Duration(hours: 1));
+      _category = AppConsts.taskCategories.contains('Personal')
+          ? 'Personal'
+          : AppConsts.taskCategories.first;
+      _priority = AppConsts.taskPriorities.contains('Medium')
+          ? 'Medium'
+          : AppConsts.taskPriorities.first;
+      _dueDate = DateTime(defaultDt.year, defaultDt.month, defaultDt.day);
+      _dueTime = TimeOfDay(hour: defaultDt.hour, minute: defaultDt.minute);
     }
-
-    final String updatedTasksJson =
-        jsonEncode(currentTasks.map((t) => t.toMap()).toList());
-    await prefs.setString('tasks', updatedTasksJson);
-    await AlarmService.scheduleTaskAlarm(newTask);
   }
 
   @override
@@ -89,89 +67,279 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     super.dispose();
   }
 
-  Future<void> _selectTime(BuildContext context) async {
-    final TimeOfDay? picked = await showTimePicker(
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final initial = _dueDate.isBefore(DateTime(now.year, now.month, now.day))
+        ? DateTime(now.year, now.month, now.day)
+        : _dueDate;
+    final picked = await showDatePicker(
       context: context,
-      initialTime: _selectedTime,
-      builder: (context, child) {
+      initialDate: initial,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 5),
+      builder: (ctx, child) {
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: lightTheme.primaryColor,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black87,
+          data: Theme.of(ctx).copyWith(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: AppColors.primary,
+              primary: AppColors.primary,
             ),
           ),
-          child: child!,
+          child: child ?? const SizedBox.shrink(),
         );
       },
     );
     if (picked != null) {
-      setState(() {
-        _selectedTime = picked;
-      });
+      setState(() => _dueDate = picked);
     }
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _dueTime,
+      builder: (ctx, child) {
+        return Theme(
+          data: Theme.of(ctx).copyWith(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: AppColors.primary,
+              primary: AppColors.primary,
+            ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _dueTime = picked);
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      final notifier = ref.read(tasksProvider.notifier);
+      final title = _titleController.text.trim();
+      final description = _descriptionController.text.trim().isEmpty
+          ? null
+          : _descriptionController.text.trim();
+
+      if (_isEditing) {
+        final existing = widget.existing!;
+        final updated = existing.copyWith(
+          title: title,
+          description: description,
+          dueDate: _dueDate,
+          dueTime: _dueTime,
+          category: _category,
+          priority: _priority,
+        );
+        await notifier.update(updated);
+      } else {
+        await notifier.add(
+          title: title,
+          description: description,
+          dueDate: _dueDate,
+          dueTime: _dueTime,
+          category: _category,
+          priority: _priority,
+        );
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppColors.error,
+            content: Text('Could not save task: $e'),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _confirmDelete() async {
+    final existing = widget.existing;
+    if (existing == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: const Text('Delete task?'),
+        content: Text('"${existing.title}" will be permanently removed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref.read(tasksProvider.notifier).delete(existing);
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: lightTheme.scaffoldBackgroundColor,
       appBar: AppBar(
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
         title: Text(
-          'Create New Task',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        centerTitle: true,
-        leading: IconButton(
-          icon: Icon(Icons.close),
-          onPressed: () => Navigator.pop(context),
+          _isEditing ? 'Edit Task' : 'New Task',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
         ),
         actions: [
-          TextButton(
-            onPressed: _saveTask,
-            child: Text(
-              'Save',
-              style: TextStyle(
-                color: lightTheme.primaryColor,
-                fontWeight: FontWeight.bold,
-              ),
+          if (_isEditing)
+            IconButton(
+              tooltip: 'Delete',
+              icon: Icon(Icons.delete_outline, color: AppColors.error),
+              onPressed: _saving ? null : _confirmDelete,
             ),
-          ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: EdgeInsets.all(16.0),
+      body: SafeArea(
         child: Form(
           key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
             children: [
-              _buildTextField(
+              _Label(text: 'Title'),
+              const SizedBox(height: 6),
+              TextFormField(
                 controller: _titleController,
-                label: 'Task Title',
-                hint: 'Enter task title',
+                textInputAction: TextInputAction.next,
+                decoration: _inputDecoration(
+                  hintText: 'What do you want to do?',
+                  icon: Icons.title_rounded,
+                ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a title';
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Title is required';
                   }
                   return null;
                 },
               ),
-              SizedBox(height: 20),
-              _buildTextField(
+              const SizedBox(height: 18),
+              _Label(text: 'Description'),
+              const SizedBox(height: 6),
+              TextFormField(
                 controller: _descriptionController,
-                label: 'Description',
-                hint: 'Enter task description',
-                maxLines: 3,
+                minLines: 3,
+                maxLines: 6,
+                textInputAction: TextInputAction.newline,
+                decoration: _inputDecoration(
+                  hintText: 'Add notes, links or context (optional)',
+                  icon: Icons.notes_rounded,
+                ),
               ),
-              SizedBox(height: 20),
-              _buildDateTimePicker(),
-              SizedBox(height: 20),
-              _buildCategorySelector(),
-              SizedBox(height: 20),
-              _buildPrioritySelector(),
+              const SizedBox(height: 18),
+              _Label(text: 'Category'),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                initialValue: _category,
+                isExpanded: true,
+                decoration: _inputDecoration(
+                  icon: Icons.label_outline_rounded,
+                  hintText: 'Pick a category',
+                ),
+                items: [
+                  for (final c in AppConsts.taskCategories)
+                    DropdownMenuItem(value: c, child: Text(c)),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _category = value);
+                },
+              ),
+              const SizedBox(height: 18),
+              _Label(text: 'Priority'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final p in AppConsts.taskPriorities)
+                    _PriorityChip(
+                      label: p,
+                      selected: _priority == p,
+                      color: _priorityColor(p),
+                      onTap: () => setState(() => _priority = p),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 22),
+              _Label(text: 'When'),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _PickerTile(
+                      icon: Icons.calendar_today_rounded,
+                      label: 'Date',
+                      value: DateFormat('EEE, MMM d').format(_dueDate),
+                      onTap: _pickDate,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _PickerTile(
+                      icon: Icons.schedule_rounded,
+                      label: 'Time',
+                      value: _dueTime.format(context),
+                      onTap: _pickTime,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor:
+                        AppColors.primary.withValues(alpha: 0.5),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : Text(_isEditing ? 'Save changes' : 'Add task'),
+                ),
+              ),
             ],
           ),
         ),
@@ -179,226 +347,193 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     );
   }
 
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    int maxLines = 1,
-    String? Function(String?)? validator,
+  Color _priorityColor(String priority) {
+    switch (priority) {
+      case 'High':
+        return AppColors.accent;
+      case 'Medium':
+        return AppColors.warning;
+      case 'Low':
+      default:
+        return AppColors.info;
+    }
+  }
+
+  InputDecoration _inputDecoration({
+    required String hintText,
+    IconData? icon,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        SizedBox(height: 8),
-        TextFormField(
-          controller: controller,
-          maxLines: maxLines,
-          validator: validator,
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: TextStyle(color: Colors.grey[400]),
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(15),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(15),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(15),
-              borderSide: BorderSide(color: lightTheme.primaryColor),
-            ),
-          ),
-        ),
-      ],
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: TextStyle(color: AppColors.textMuted),
+      filled: true,
+      fillColor: AppColors.surface,
+      prefixIcon: icon == null
+          ? null
+          : Icon(icon, color: AppColors.textSecondary, size: 20),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: Theme.of(context).dividerColor),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: Theme.of(context).dividerColor),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1.4),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppColors.error),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppColors.error, width: 1.4),
+      ),
     );
   }
+}
 
-  Widget _buildDateTimePicker() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Time',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        SizedBox(height: 8),
-        GestureDetector(
-          onTap: () => _selectTime(context),
-          child: Container(
-            padding: EdgeInsets.all(15),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: lightTheme.primaryColor),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.access_time,
-                  color: lightTheme.primaryColor,
-                  size: 20,
-                ),
-                SizedBox(width: 10),
-                Text(
-                  _selectedTime.format(context),
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ),
+class _Label extends StatelessWidget {
+  final String text;
+  const _Label({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w600,
           ),
-        ),
-      ],
     );
   }
+}
 
-  Widget _buildCategorySelector() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Category',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        SizedBox(height: 8),
-        SizedBox(
-          height: 100,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: categories.length,
-            itemBuilder: (context, index) {
-              final category = categories[index];
-              final isSelected = _selectedCategory == category['name'];
-              return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _selectedCategory = category['name'];
-                  });
-                },
-                child: Container(
-                  width: 80,
-                  margin: EdgeInsets.only(right: 15),
-                  decoration: BoxDecoration(
-                    color: isSelected ? category['color'] : Colors.white,
-                    borderRadius: BorderRadius.circular(15),
-                    border: Border.all(
-                      color: category['color'],
-                      width: 2,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        category['icon'],
-                        color: isSelected ? Colors.white : category['color'],
-                      ),
-                      SizedBox(height: 5),
-                      Text(
-                        category['name'],
-                        style: TextStyle(
-                          color: isSelected ? Colors.white : Colors.black87,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+class _PriorityChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _PriorityChip({
+    required this.label,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? color : color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? color : color.withValues(alpha: 0.4),
+            ),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPrioritySelector() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Priority',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        SizedBox(height: 8),
-        Row(
-          children: priorities.map((priority) {
-            final isSelected = _selectedPriority == priority;
-            Color priorityColor;
-            switch (priority) {
-              case 'High':
-                priorityColor = Color(0xFFFF6B6B);
-                break;
-              case 'Medium':
-                priorityColor = Color(0xFFFFB562);
-                break;
-              default:
-                priorityColor = Color(0xFF4ECDC4);
-            }
-            return Expanded(
-              child: GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _selectedPriority = priority;
-                  });
-                },
-                child: Container(
-                  margin: EdgeInsets.only(right: priority != 'High' ? 15 : 0),
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  decoration: BoxDecoration(
-                    color: isSelected ? priorityColor : Colors.white,
-                    borderRadius: BorderRadius.circular(15),
-                    border: Border.all(
-                      color: priorityColor,
-                      width: 2,
-                    ),
-                  ),
-                  child: Text(
-                    priority,
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : priorityColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: selected ? Colors.white : color,
+                  shape: BoxShape.circle,
                 ),
               ),
-            );
-          }).toList(),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? Colors.white : color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
+}
 
-  Future<void> _saveTask() async {
-    if (_formKey.currentState!.validate()) {
-      final task = Task(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: _titleController.text,
-        description: _descriptionController.text,
-        createdAt: DateTime.now(),
-        dueTime: _selectedTime,
-        category: _selectedCategory,
-        priority: _selectedPriority,
-        isCompleted: false,
-      );
-      await _saveTasks(task);
-      if (mounted) {
-        Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (context) => BottomNavScreen(
-                      index: 0,
-                    )));
-      }
-    }
+class _PickerTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  const _PickerTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, size: 18, color: AppColors.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

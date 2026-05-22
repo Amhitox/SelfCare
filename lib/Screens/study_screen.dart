@@ -1,485 +1,522 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import '../Models/achievement.dart';
-import '../Services/achievement_service.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:percent_indicator/circular_percent_indicator.dart';
+import 'package:selfcare/Models/study_session.dart';
+import 'package:selfcare/Services/ads_service.dart';
+import 'package:selfcare/Services/notification_service.dart';
+import 'package:selfcare/Widgets/state_widgets.dart';
+import 'package:selfcare/providers/study_provider.dart';
+import 'package:selfcare/utils/constants/colors.dart';
 
-class StudyScreen extends StatefulWidget {
+class StudyScreen extends ConsumerStatefulWidget {
   const StudyScreen({super.key});
 
   @override
-  _StudyScreenState createState() => _StudyScreenState();
+  ConsumerState<StudyScreen> createState() => _StudyScreenState();
 }
 
-class _StudyScreenState extends State<StudyScreen>
-    with TickerProviderStateMixin {
-  bool isTimerRunning = false;
-  int selectedMinutes = 25;
-  int remainingSeconds = 0;
-  int streak = 0;
-  int sessions = 0;
-  int focusTime = 0;
+class _StudyScreenState extends ConsumerState<StudyScreen> {
+  static const List<int> _durations = [15, 25, 45, 60];
+
+  int _selectedMinutes = 25;
+  int _remainingSeconds = 25 * 60;
+  bool _running = false;
   Timer? _timer;
-  late AnimationController _bounceController;
-  Achievement? _achievement;
-  bool _isLoading = true;
-
-  final List<int> timerOptions = [25, 30, 45, 60];
-  final List<Map<String, dynamic>> studyTips = [
-    {
-      'tip': 'Take short breaks every 25 minutes',
-      'icon': '🌱',
-    },
-    {
-      'tip': 'Stay hydrated while studying',
-      'icon': '💧',
-    },
-    {
-      'tip': 'Find a quiet study space',
-      'icon': '📚',
-    },
-  ];
-
-  final List<Map<String, dynamic>> achievements = [
-    {
-      'title': 'Focus Time',
-      'value': '2h 30m',
-      'icon': Icons.timer,
-      'color': Color(0xFFFFB562),
-    },
-    {
-      'title': 'Sessions',
-      'value': '4',
-      'icon': Icons.flag,
-      'color': Color(0xFF4ECDC4),
-    },
-    {
-      'title': 'Streak',
-      'value': '3 days',
-      'icon': Icons.local_fire_department,
-      'color': Color(0xFFFF6B6B),
-    },
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    remainingSeconds = selectedMinutes * 60;
-    _bounceController = AnimationController(
-      duration: Duration(milliseconds: 1500),
-      vsync: this,
-    )..repeat(reverse: true);
-    _loadAchievements();
-  }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _bounceController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadAchievements() async {
-    final achievements = await AchievementService.getAchievements();
+  void _setDuration(int minutes) {
+    if (_running) return;
     setState(() {
-      _achievement = achievements;
-      _isLoading = false;
+      _selectedMinutes = minutes;
+      _remainingSeconds = minutes * 60;
     });
   }
 
-  void startTimer() {
-    if (_timer != null) {
-      _timer!.cancel();
-    }
-
-    setState(() {
-      isTimerRunning = true;
-      remainingSeconds = selectedMinutes * 60;
-    });
-
-    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-      if (remainingSeconds > 0) {
+  void _start() {
+    if (_running) return;
+    setState(() => _running = true);
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_remainingSeconds <= 1) {
+        _timer?.cancel();
         setState(() {
-          remainingSeconds--;
+          _remainingSeconds = 0;
+          _running = false;
         });
+        _onCompleted();
       } else {
-        timer.cancel();
-        setState(() {
-          isTimerRunning = false;
-        });
-        _showCompletionDialog();
+        setState(() => _remainingSeconds--);
       }
     });
   }
 
-  void pauseTimer() {
+  void _pause() {
+    _timer?.cancel();
+    setState(() => _running = false);
+  }
+
+  void _reset() {
     _timer?.cancel();
     setState(() {
-      isTimerRunning = false;
+      _running = false;
+      _remainingSeconds = _selectedMinutes * 60;
     });
   }
 
-  void resetTimer() {
-    _timer?.cancel();
-    setState(() {
-      isTimerRunning = false;
-      remainingSeconds = selectedMinutes * 60;
-    });
-  }
-
-  String formatTime(int seconds) {
-    int minutes = seconds ~/ 60;
-    int remainingSeconds = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
-
-  void _showCompletionDialog() {
-    showDialog(
+  Future<void> _onCompleted() async {
+    final minutes = _selectedMinutes;
+    await ref.read(studyProvider.notifier).addSession(minutes);
+    if (!mounted) return;
+    final achievement = ref.read(studyProvider).achievement;
+    showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
-        title: Text(
-          'Great job! 🎉',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        title: const Text('Session complete'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'You completed your study session!',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey[600],
-              ),
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF4ECDC4),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                padding: EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-              ),
-              child: Text('Continue'),
-            ),
+            Text('Great focus for $minutes minutes.'),
+            const SizedBox(height: 8),
+            Text('Streak: ${achievement.streak} day(s)'),
+            Text('Total focus: ${achievement.totalFocusTime}'),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Nice'),
+          ),
+        ],
       ),
     );
+    unawaited(AdsService.instance.maybeShowInterstitial());
+    unawaited(NotificationService.showNow(
+      'Session complete!',
+      'Great focus - keep it going.',
+    ));
+    setState(() => _remainingSeconds = _selectedMinutes * 60);
+  }
+
+  String _formatMmSs(int totalSeconds) {
+    final m = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  Future<void> _confirmDelete(StudySession session) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: const Text('Delete session?'),
+        content: const Text('This will remove the session permanently.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(studyProvider.notifier).deleteSession(session);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session deleted')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final study = ref.watch(studyProvider);
+    final achievement = study.achievement;
+    final weekMinutes = ref.read(studyProvider.notifier).minutesThisWeek();
+    final totalSeconds = _selectedMinutes * 60;
+    final progress =
+        totalSeconds == 0 ? 0.0 : 1 - (_remainingSeconds / totalSeconds);
+
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: const Text('Study'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _StatsRow(
+                streak: achievement.streak,
+                sessions: achievement.sessions,
+                totalFocus: achievement.totalFocusTime,
+                weekMinutes: weekMinutes,
+              ),
+              const SizedBox(height: 20),
+              _DurationPicker(
+                durations: _durations,
+                selected: _selectedMinutes,
+                onSelected: _setDuration,
+                disabled: _running,
+              ),
+              const SizedBox(height: 20),
+              Center(
+                child: CircularPercentIndicator(
+                  radius: 120,
+                  lineWidth: 14,
+                  percent: progress.clamp(0.0, 1.0),
+                  animation: false,
+                  circularStrokeCap: CircularStrokeCap.round,
+                  backgroundColor:
+                      AppColors.primary.withValues(alpha: 0.12),
+                  progressColor: AppColors.primary,
+                  center: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildTimer(),
-                      SizedBox(height: 30),
-                      _buildTimerOptions(),
-                      SizedBox(height: 30),
-                      _buildAchievements(),
-                      SizedBox(height: 30),
-                      _buildStudyTips(),
+                      Text(
+                        _formatMmSs(_remainingSeconds),
+                        style: const TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _running ? 'Focusing' : 'Ready',
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _running ? _pause : _start,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: Icon(_running
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded),
+                      label: Text(_running ? 'Pause' : 'Start'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _reset,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: const BorderSide(color: AppColors.primary),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Reset'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'Recent sessions',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _RecentSessions(
+                sessions: study.sessions.take(5).toList(),
+                onDelete: _confirmDelete,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildHeader() {
-    return Container(
-      padding: EdgeInsets.all(20),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Study Time',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              Text(
-                'Focus on your goals',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
+class _StatsRow extends StatelessWidget {
+  final int streak;
+  final int sessions;
+  final String totalFocus;
+  final int weekMinutes;
+
+  const _StatsRow({
+    required this.streak,
+    required this.sessions,
+    required this.totalFocus,
+    required this.weekMinutes,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _StatTile(
+            icon: Icons.local_fire_department_rounded,
+            label: 'Streak',
+            value: '$streak',
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.timer_outlined,
+            label: 'Sessions',
+            value: '$sessions',
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.bolt_rounded,
+            label: 'Focus',
+            value: totalFocus,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.calendar_view_week_rounded,
+            label: 'Week',
+            value: '${weekMinutes}m',
+          ),
+        ),
+      ],
     );
   }
+}
 
-  Widget _buildTimer() {
+class _StatTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _StatTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.all(30),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 20,
-            offset: Offset(0, 10),
-          ),
-        ],
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor),
       ),
       child: Column(
         children: [
-          SlideTransition(
-            position: Tween<Offset>(
-              begin: Offset(0, 0),
-              end: Offset(0, 0.1),
-            ).animate(_bounceController),
-            child: Text(
-              isTimerRunning ? '🎯' : '🌟',
-              style: TextStyle(fontSize: 40),
-            ),
-          ),
-          SizedBox(height: 20),
+          Icon(icon, color: AppColors.primary, size: 22),
+          const SizedBox(height: 6),
           Text(
-            formatTime(remainingSeconds),
-            style: TextStyle(
-              fontSize: 48,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
+            value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          SizedBox(height: 30),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildTimerButton(
-                isTimerRunning ? 'Pause' : 'Start',
-                isTimerRunning ? Icons.pause : Icons.play_arrow,
-                isTimerRunning ? pauseTimer : startTimer,
-                isTimerRunning ? Color(0xFFFF6B6B) : Color(0xFF4ECDC4),
-              ),
-              SizedBox(width: 20),
-              _buildTimerButton(
-                'Reset',
-                Icons.refresh,
-                resetTimer,
-                Colors.grey[400]!,
-              ),
-            ],
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppColors.textSecondary,
+            ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildTimerButton(
-    String label,
-    IconData icon,
-    VoidCallback onPressed,
-    Color color,
-  ) {
-    return ElevatedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon),
-      label: Text(label),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      ),
-    );
-  }
+class _DurationPicker extends StatelessWidget {
+  final List<int> durations;
+  final int selected;
+  final ValueChanged<int> onSelected;
+  final bool disabled;
 
-  Widget _buildTimerOptions() {
+  const _DurationPicker({
+    required this.durations,
+    required this.selected,
+    required this.onSelected,
+    required this.disabled,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      children: timerOptions.map((minutes) {
-        final isSelected = selectedMinutes == minutes;
-        return GestureDetector(
-          onTap: () {
-            if (!isTimerRunning) {
-              setState(() {
-                selectedMinutes = minutes;
-                remainingSeconds = minutes * 60;
-              });
-            }
-          },
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            decoration: BoxDecoration(
-              color: isSelected ? Color(0xFF4ECDC4) : Colors.white,
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(
-                color: isSelected ? Color(0xFF4ECDC4) : Colors.grey[300]!,
-              ),
-            ),
-            child: Text(
-              '$minutes min',
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.grey[600],
-                fontWeight: FontWeight.w600,
-              ),
+      spacing: 8,
+      runSpacing: 8,
+      children: durations.map((m) {
+        final isSelected = m == selected;
+        return FilterChip(
+          label: Text('$m min'),
+          selected: isSelected,
+          onSelected: disabled ? null : (_) => onSelected(m),
+          selectedColor: AppColors.primary,
+          checkmarkColor: Colors.white,
+          labelStyle: TextStyle(
+            color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+            fontWeight: FontWeight.w600,
+          ),
+          backgroundColor: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: isSelected ? AppColors.primary : Theme.of(context).dividerColor,
             ),
           ),
         );
       }).toList(),
     );
   }
+}
 
-  Widget _buildAchievements() {
-    if (_isLoading || _achievement == null) {
-      return const Center(
-        child: CircularProgressIndicator(),
+class _RecentSessions extends StatelessWidget {
+  final List<StudySession> sessions;
+  final Future<void> Function(StudySession) onDelete;
+
+  const _RecentSessions({required this.sessions, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    if (sessions.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: EmptyState(
+          icon: Icons.menu_book_outlined,
+          title: 'No sessions yet',
+          message: 'Start your first focus session above.',
+        ),
       );
     }
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        _buildAchievementItem(
-          Icons.local_fire_department,
-          _achievement!.streak.toString(),
-          'Streak',
-        ),
-        _buildAchievementItem(
-          Icons.timer,
-          _achievement!.sessions.toString(),
-          'Sessions',
-        ),
-        _buildAchievementItem(
-          Icons.access_time_filled,
-          _achievement!.totalFocusTime,
-          'Focus Time',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAchievementItem(
-    IconData icon,
-    String value,
-    String label,
-  ) {
+    final fmt = DateFormat('EEE, MMM d - h:mm a');
     return Column(
-      children: [
-        Container(
-          padding: EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            icon,
-            color: Colors.black87,
-            size: 24,
-          ),
-        ),
-        SizedBox(height: 8),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[600],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStudyTips() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(
-        'Study Tips',
-        style: TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          color: Colors.black87,
-        ),
-      ),
-      SizedBox(height: 15),
-      ...studyTips.map((tip) {
-        return Container(
-          margin: EdgeInsets.only(bottom: 10),
-          padding: EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: Offset(0, 5),
+      children: sessions
+          .map(
+            (s) => Dismissible(
+              key: ValueKey(s.id),
+              direction: DismissDirection.endToStart,
+              confirmDismiss: (_) async {
+                await onDelete(s);
+                return false;
+              },
+              background: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child:
+                    const Icon(Icons.delete_outline, color: AppColors.error),
               ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Text(
-                tip['icon'],
-                style: TextStyle(fontSize: 24),
-              ),
-              SizedBox(width: 15),
-              Expanded(
-                child: Text(
-                  tip['tip'],
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[800],
-                  ),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.menu_book_rounded,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            s.subject,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            fmt.format(s.date),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '${s.durationMinutes}m',
+                        style: const TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
-        );
-      }),
-    ]);
-  }
-
-  // When a study session is completed
-  Future<void> _onSessionComplete(int durationMinutes) async {
-    if (_achievement != null) {
-      final updatedAchievement =
-          await AchievementService.addStudySession(durationMinutes);
-      setState(() {
-        _achievement = updatedAchievement;
-      });
-    }
+            ),
+          )
+          .toList(),
+    );
   }
 }

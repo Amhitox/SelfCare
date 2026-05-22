@@ -1,0 +1,35 @@
+SelfCare is the calm, all-in-one wellness companion that helps you organize your day, focus your mind, and check in with how you actually feel.
+
+Life pulls you in too many directions. Your to-dos live in one app, your focus timer in another, your mood and journal somewhere else, and none of them talk to each other. SelfCare brings the essentials into a single, beautifully designed space so taking care of yourself is the easy choice.
+
+What you can do with SelfCare:
+- Plan your day with simple, reminder-ready tasks
+- Stay focused with a built-in Pomodoro timer and streaks
+- Check in with a quick daily mood scale, tags, and notes
+- Reflect through a private journal that stays on your device
+- Calm down with a guided breathing exercise
+- Switch between a polished pink light theme and a restful dark mode
+- Use the entire app offline, with no account required
+- Unlock a premium theme as a small thank-you
+
+Tasks
+Capture what you need to do, add a note and a due date, and let SelfCare remind you at the right moment. Mark items complete with a single tap and watch your list shrink. Reminders run locally on your device, so they fire even when you are offline.
+
+Study
+The built-in Pomodoro timer helps you settle into focused work sessions and take real breaks. SelfCare tracks your streak day after day so you can see your consistency grow, and your session history feeds the dashboard so you always know where you stand this week.
+
+Mood and Journal
+A daily mood check-in takes seconds. Pick a point on the five-point scale, add a few tags for context, and jot down what is on your mind. When you want more space, open the journal and write as much as you like. Entries are searchable and never leave your phone.
+
+Self-care
+A guided breathing exercise paces your inhale, hold, and exhale with a gentle animation, perfect for a quick reset between meetings or before bed. Browse curated self-care prompts when you need an idea of what to try next.
+
+Privacy you can trust
+SelfCare is offline-first. There is no sign-up, no cloud sync, and no server collecting your wellness data. Your tasks, moods, journal entries, and study sessions are stored locally on your device using a fast encrypted-on-disk database. The only network traffic SelfCare makes is to load ads, which keep the core app free for everyone. You can switch to non-personalized ads from your device settings at any time.
+
+Built for daily use
+SelfCare is designed to feel light. Every screen has loading, empty, and error states so the app is calm even when something is missing. The pink palette is consistent across light and dark modes, the typography is easy on the eyes, and animations are tuned to be gentle rather than distracting.
+
+Whether you are a student trying to study with intent, a professional juggling tasks and burnout, or simply someone who wants to be kinder to themselves, SelfCare is built to support the small daily habits that add up.
+
+Download SelfCare today and start showing up for yourself, one quiet moment at a time.
