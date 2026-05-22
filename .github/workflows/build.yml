@@ -37,7 +37,12 @@ jobs:
         continue-on-error: true
 
       - name: test
-        run: flutter test
+        run: |
+          if [ -d test ] && find test -name '*_test.dart' | grep -q .; then
+            flutter test
+          else
+            echo "no tests found, skipping"
+          fi
 
       - name: build debug apk
         run: flutter build apk --debug
